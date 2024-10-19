@@ -3,12 +3,12 @@
 #  >>>>>>>>>>>>>>>>  Impact of drought spells and extreme heat days on child well-being and development >>>>>>>>>>>>>>>>>
 #
 #
-#           --------------Data Loading and creating treatment variables---------------
+#           --------------Data Loading and creating SPEI treatment variables---------------
 #
 # 
 #                  1) Some settings on the loading and processing of data
-#                  2) x
-#                  3) x
+#                  2) Load Google Earth Engine data and create SPEI treatment indicator
+#                  3) Create SPEI treatment indicators for LGAs
 # 
 # 
 # 
@@ -31,6 +31,7 @@ rm(list = ls())
 # Controls ----------------------------------------------------------------
 
 data_path<- "/data/"
+input_path <- "/input/"
 
 # Packages ----------------------------------------------------------------
 
@@ -53,7 +54,7 @@ setwd(wd)
 #   2) Load Google Earth Engine data and create SPEI treatment indicator
 # ===========================================================================
 
-weather_data <- data.table(read_dta("era5_land_daily_mean_LGA_Nigeria_raw_anonym.dta"))
+weather_data <- data.table(read_dta(paste0(wd, input_path, "era5_land_daily_mean_LGA_Nigeria_raw_anonym.dta")))
 weather_data[, date := substr(systemindex, 1, 8)]
 weather_data$date <- as.Date(as.character(weather_data$date), format = "%Y%m%d")
 
@@ -68,7 +69,9 @@ weather_data$date <- as.Date(as.character(weather_data$date), format = "%Y%m%d")
 # the difference between precipitation and PET over various timescales (e.g., 1 month, 3 months, 12 months)
 # to capture both short-term and long-term droughts.
 
-# ==============================================================================
+# =============================================================================
+# 2.2) Calculate water balance
+# =============================================================================
 
 # Calculate water balance: Precipitation - Evaporation
 weather_data[, water_balance := total_precipitation_sum + potential_evaporation_sum]
@@ -92,6 +95,10 @@ rm(positive_pet)
 # Seems like there are only 114 out of 11 Mio observations that are positive.
 # This alleviates concerns, might mean anormal conditions like fog maybe? or measurement error.
 # --------------------------------------------------------------------------------------------------
+
+# =============================================================================
+# 2.3) Calculate SPEI for one LGA 
+# =============================================================================
 
 # Example for one district (filtering by lga_code)
 lga_data <- monthly_weather_data[lga_code_anonym == 14]
@@ -164,16 +171,24 @@ ggplot(lga_data, aes(x = year_month)) +
         legend.background = element_blank())  # Remove the background around the legend for a cleaner look
 
 
-### Creating a wide data.table for 2021 survey date
+
+# =============================================================================
+# 3) Create SPEI treatment indicators for LGAs
+# =============================================================================
+
+# =============================================================================
+# 3.1) Create SPEI table for one LGA 2021 survey date
+# =============================================================================
+
 # Define survey date
-survey_date <- as.Date("2021-10-01")
+survey_date <- as.Date("2021-09-01")
 
 # Also calculate 12 months leading up to the survey for 1-month SPEI
 months_before_survey <- seq(survey_date, by = "-1 month", length.out = 13)
 
 
 # Filter for the dates of interest
-lga_data_filtered <- lga_data[year_month %in% c(dates_before_survey, months_before_survey)]
+lga_data_filtered <- lga_data[year_month %in% c(months_before_survey)]
 
 # Create columns for 1-month SPEI for 12 months leading up to the survey
 for (i in 1:12) {
@@ -184,10 +199,12 @@ for (i in 1:12) {
 lga_data_filtered <- lga_data_filtered[year_month %in% survey_date]
 
 
-### Scaling it up to all survey dates
+# =============================================================================
+# 3.2) Create SPEI table for one LGA for all survey dates
+# =============================================================================
 
 # Define all survey dates
-survey_dates <- as.Date(c("2021-10-01", "2016-10-01", "2011-10-01", "2007-10-01"))
+survey_dates <- as.Date(c("2021-09-01", "2016-09-01", "2011-09-01", "2007-09-01"))
 
 # Loop through each survey date
 for (survey_date in survey_dates) {
@@ -215,7 +232,9 @@ for (survey_date in survey_dates) {
 lga_data_filtered <- lga_data[year_month %in% survey_dates]
 
 
-#### Loop over unique LGA codes
+# =============================================================================
+# 3.3) Create SPEI table for all LGA for all survey dates
+# =============================================================================
 
 ## First step: calculate all the SPEI values
 
