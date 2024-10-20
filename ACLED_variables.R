@@ -7,8 +7,8 @@
 #
 # 
 #                  1) Some settings on the loading and processing of data
-#                  2) xx
-#                  3) xx
+#                  2) Load MICS and ACLED dataset
+#                  3) Create ACLED treatment variables
 # 
 # 
 # 
@@ -36,7 +36,7 @@ input_path <- "/input/"
 # Packages ----------------------------------------------------------------
 
 # Packages to load
-pckg_to_load <- c("data.table", "haven", "ggplot2", "lubridate", "sf", "tmap") 
+pckg_to_load <- c("data.table", "haven", "ggplot2", "lubridate", "sf", "tmap", "future.apply") 
 
 # Load packages silently
 suppressPackageStartupMessages(
@@ -65,7 +65,7 @@ ACLED_data[, date := as.Date(event_date, format = "%d %B %Y")]
 
 
 # ===========================================================================
-#   3) Calculate distances
+#   3) Create ACLED treatment variables
 # ===========================================================================
 
 # Create sf objects for the coordinates in both datasets
@@ -79,18 +79,18 @@ ACLED_sf <- st_transform(ACLED_sf, 3857)
 # check how it looks like on a map
 
 # Set tmap to interactive mode (optional)
-tmap_mode("view")
+# tmap_mode("view")
 
 # Create a hexbin map for ACLED data
-tm_shape(ACLED_sf) +
-  tm_bubbles(size = 1, col = "red", border.col = "darkred", 
-             scale = 2, alpha = 0.6, style = "quantile", 
-             title.size = "Event Density") +
-  tm_shape(MICS_sf) +
-  tm_bubbles(size = 1, col = "blue", border.col = "darkblue", 
-             scale = 2, alpha = 0.6, style = "quantile", 
-             title.size = "Household Density") +
-  tm_basemap("OpenStreetMap")
+# tm_shape(ACLED_sf) +
+#   tm_bubbles(size = 1, col = "red", border.col = "darkred", 
+#              scale = 2, alpha = 0.6, style = "quantile", 
+#              title.size = "Event Density") +
+#   tm_shape(MICS_sf) +
+#   tm_bubbles(size = 1, col = "blue", border.col = "darkblue", 
+#              scale = 2, alpha = 0.6, style = "quantile", 
+#              title.size = "Household Density") +
+#   tm_basemap("OpenStreetMap")
 
 # ===========================================================================
 #   3.1) Create table for all events
@@ -110,23 +110,41 @@ distances <- list(
   "within_50km" = 50,
   "within_100km" = 100,
   "within_200km" = 200,
-  "between_51_100km" = c(51, 100),
-  "between_101_150km" = c(101, 150),
-  "between_151_200km" = c(151, 200)
+  "between_50_100km" = c(50, 100),
+  "between_100_150km" = c(100, 150),
+  "between_150_200km" = c(150, 200)
 )
 
-# Initialize an empty list to store results
+
+
+# Use 'multicore' for Linux/macOS or 'multisession' for Windows
+plan(multisession)
+
+# Initialize results and progress tracking
 results <- list()
+progress_file <- "progress_results.rds"
+completed_ids <- c()
+
+# Check if a progress file exists, and load it if it does
+if (file.exists(progress_file)) {
+  saved_data <- readRDS(progress_file)
+  results <- saved_data$results
+  completed_ids <- saved_data$completed_ids
+}
 
 # Iterate through each household
 for (i in 1:nrow(MICS_sf)) {
   hh_sf <- MICS_sf[i, ]
   int_date <- MICS_data[i, date]
-  hh_id <- MICS_data[i, id_hh][1] # store hh_id
+  hh_id <- MICS_data[i, id_hh][1]  # Store hh_id
+  
+  # Skip already completed households
+  if (hh_id %in% completed_ids) next
   
   hh_results <- list()
-  # Add the household ID to the results
   hh_results$hh_id <- hh_id
+  
+  print(paste0("Running for household number: ",hh_id))
   
   # Iterate through each time frame
   for (tf in names(time_frames)) {
@@ -136,31 +154,44 @@ for (i in 1:nrow(MICS_sf)) {
     # Iterate through each distance band
     for (dist in names(distances)) {
       if (length(distances[[dist]]) == 1) {
-        # Single radius distance (e.g., 10km, 25km, etc.)
         radius <- distances[[dist]]
         n_events <- count_events_in_radius(hh_sf, int_date, radius, tf_start, tf_end)
       } else {
-        # Distance range (e.g., 51-100km, 101-150km, etc.)
         lower_radius <- distances[[dist]][1]
         upper_radius <- distances[[dist]][2]
         n_events <- count_events_in_radius(hh_sf, int_date, upper_radius, tf_start, tf_end) -
           count_events_in_radius(hh_sf, int_date, lower_radius, tf_start, tf_end)
       }
       
-      # Store the result
       hh_results[[paste0(tf, "_", dist)]] <- n_events
     }
   }
   
   # Store the results for the household
   results[[i]] <- hh_results
+  
+  # Add the household ID to completed_ids
+  completed_ids <- c(completed_ids, hh_id)
+  
+  # Save progress every N iterations (e.g., every 100 households)
+  if (i %% 100 == 0) {
+    saveRDS(list(results = results, completed_ids = completed_ids), progress_file)
+  }
 }
 
-# Convert results to data.table for easy viewing
+# Shut down parallel workers after the job is done
+plan(sequential)
+
+# Final save after the loop completes
+saveRDS(list(results = results, completed_ids = completed_ids), progress_file)
+
+# Convert results to data.table
 results_dt <- rbindlist(lapply(results, as.data.table), fill = TRUE)
 
+write.csv(results_dt, paste0(wd, data_path, "ACLED_all",".csv"), row.names = FALSE, na = "")
+print("ACLED all treatment variables saved to ACLED_all.csv file")
 
-
+rm(saved_data)
 # ===========================================================================
 #   3.2) Create table for Boku Haram events
 # ===========================================================================
@@ -174,16 +205,33 @@ boko_in_assoc_actor1 <- grepl("Boko Haram", ACLED_sf$assoc_actor_1, ignore.case 
 ACLED_boko_haram <- ACLED_sf[boko_in_actor1 | boko_in_assoc_actor1, ]
 
 
-# Now run the same process as before using the `count_events_in_radius_boko` function
+# Use 'multicore' for Linux/macOS or 'multisession' for Windows
+plan(multisession)
+
+# Initialize results and progress tracking
 results_boko_haram <- list()
+progress_file <- "progress_results_boko.rds"
+completed_ids <- c()
+
+# Check if a progress file exists, and load it if it does
+if (file.exists(progress_file)) {
+  saved_data <- readRDS(progress_file)
+  results_boko_haram <- saved_data$results_boko_haram
+  completed_ids <- saved_data$completed_ids
+}
 
 for (i in 1:nrow(MICS_sf)) {
   hh_sf <- MICS_sf[i, ]
   int_date <- MICS_data[i, date]
   hh_id <- MICS_data[i, id_hh][1]  # Store hh_id
   
+  # Skip already completed households
+  if (hh_id %in% completed_ids) next
+  
   hh_results <- list()
   hh_results$hh_id <- hh_id
+  
+  print(paste0("Running for household number: ",hh_id))
   
   for (tf in names(time_frames)) {
     tf_start <- time_frames[[tf]][1]
@@ -205,111 +253,29 @@ for (i in 1:nrow(MICS_sf)) {
   }
   
   results_boko_haram[[i]] <- hh_results
-}
-
-# Convert to data.table
-results_boko_haram_dt <- rbindlist(lapply(results_boko_haram, as.data.table), fill = TRUE)
-
-
-# ===========================================================================
-#   3.2) Create table for Boku Haram events
-# ===========================================================================
-
-
-# Filter ACLED events for "Boko Haram" in actor1 or assoc_actor_1
-boko_in_actor1 <- grepl("Boko Haram", ACLED_sf$actor1, ignore.case = TRUE)
-boko_in_assoc_actor1 <- grepl("Boko Haram", ACLED_sf$assoc_actor_1, ignore.case = TRUE)
-
-# Combine the conditions
-ACLED_boko_haram <- ACLED_sf[boko_in_actor1 | boko_in_assoc_actor1, ]
-
-
-# Now run the same process as before using the `count_events_in_radius_boko` function
-results_boko_haram <- list()
-
-for (i in 1:nrow(MICS_sf)) {
-  hh_sf <- MICS_sf[i, ]
-  int_date <- MICS_data[i, date]
-  hh_id <- MICS_data[i, id_hh][1]  # Store hh_id
   
-  hh_results <- list()
-  hh_results$hh_id <- hh_id
+  # Add the household ID to completed_ids
+  completed_ids <- c(completed_ids, hh_id)
   
-  for (tf in names(time_frames)) {
-    tf_start <- time_frames[[tf]][1]
-    tf_end <- time_frames[[tf]][2]
-    
-    for (dist in names(distances)) {
-      if (length(distances[[dist]]) == 1) {
-        radius <- distances[[dist]]
-        n_events <- count_events_in_radius_boko(hh_sf, int_date, radius, tf_start, tf_end)
-      } else {
-        lower_radius <- distances[[dist]][1]
-        upper_radius <- distances[[dist]][2]
-        n_events <- count_events_in_radius_boko(hh_sf, int_date, upper_radius, tf_start, tf_end) -
-          count_events_in_radius_boko(hh_sf, int_date, lower_radius, tf_start, tf_end)
-      }
-      
-      hh_results[[paste0(tf, "_", dist)]] <- n_events
-    }
+  # Save progress every N iterations (e.g., every 100 households)
+  if (i %% 100 == 0) {
+    saveRDS(list(results_boko_haram = results_boko_haram, completed_ids = completed_ids), progress_file)
   }
-  
-  results_boko_haram[[i]] <- hh_results
 }
+
+# Shut down parallel workers after the job is done
+plan(sequential)
+
+# Final save after the loop completes
+saveRDS(list(results_boko_haram = results_boko_haram, completed_ids = completed_ids), progress_file)
 
 # Convert to data.table
 results_boko_haram_dt <- rbindlist(lapply(results_boko_haram, as.data.table), fill = TRUE)
 
-# ===========================================================================
-#   3.2) Create table for Boku Haram events
-# ===========================================================================
+write.csv(results_boko_haram_dt, paste0(wd, data_path, "ACLED_boko_haram",".csv"), row.names = FALSE, na = "")
+print("ACLED Boko Haram treatment variables saved to ACLED_boko_haram.csv file")
 
-
-# Filter ACLED events for "Boko Haram" in actor1 or assoc_actor_1
-boko_in_actor1 <- grepl("Boko Haram", ACLED_sf$actor1, ignore.case = TRUE)
-boko_in_assoc_actor1 <- grepl("Boko Haram", ACLED_sf$assoc_actor_1, ignore.case = TRUE)
-
-# Combine the conditions
-ACLED_boko_haram <- ACLED_sf[boko_in_actor1 | boko_in_assoc_actor1, ]
-
-
-# Now run the same process as before using the `count_events_in_radius_boko` function
-results_boko_haram <- list()
-
-for (i in 1:nrow(MICS_sf)) {
-  hh_sf <- MICS_sf[i, ]
-  int_date <- MICS_data[i, date]
-  hh_id <- MICS_data[i, id_hh][1]  # Store hh_id
-  
-  hh_results <- list()
-  hh_results$hh_id <- hh_id
-  
-  for (tf in names(time_frames)) {
-    tf_start <- time_frames[[tf]][1]
-    tf_end <- time_frames[[tf]][2]
-    
-    for (dist in names(distances)) {
-      if (length(distances[[dist]]) == 1) {
-        radius <- distances[[dist]]
-        n_events <- count_events_in_radius_boko(hh_sf, int_date, radius, tf_start, tf_end)
-      } else {
-        lower_radius <- distances[[dist]][1]
-        upper_radius <- distances[[dist]][2]
-        n_events <- count_events_in_radius_boko(hh_sf, int_date, upper_radius, tf_start, tf_end) -
-          count_events_in_radius_boko(hh_sf, int_date, lower_radius, tf_start, tf_end)
-      }
-      
-      hh_results[[paste0(tf, "_", dist)]] <- n_events
-    }
-  }
-  
-  results_boko_haram[[i]] <- hh_results
-}
-
-# Convert to data.table
-results_boko_haram_dt <- rbindlist(lapply(results_boko_haram, as.data.table), fill = TRUE)
-
-
+rm(saved_data)
 # ===========================================================================
 #   3.3) Create table for Fulani events
 # ===========================================================================
@@ -323,16 +289,34 @@ fulani_in_assoc_actor1 <- grepl("Fulani", ACLED_sf$assoc_actor_1, ignore.case = 
 ACLED_fulani <- ACLED_sf[fulani_in_actor1 | fulani_in_assoc_actor1, ]
 
 
-# Now run the same process as before using the `count_events_in_radius_boko` function
+# Use 'multicore' for Linux/macOS or 'multisession' for Windows
+plan(multisession)
+
+# Initialize results and progress tracking
 results_fulani <- list()
+progress_file <- "progress_results_fulani.rds"
+completed_ids <- c()
+
+# Check if a progress file exists, and load it if it does
+if (file.exists(progress_file)) {
+  saved_data <- readRDS(progress_file)
+  results_fulani <- saved_data$results_fulani
+  completed_ids <- saved_data$completed_ids
+}
 
 for (i in 1:nrow(MICS_sf)) {
   hh_sf <- MICS_sf[i, ]
   int_date <- MICS_data[i, date]
   hh_id <- MICS_data[i, id_hh][1]  # Store hh_id
   
+  # Skip already completed households
+  if (hh_id %in% completed_ids) next
+  
   hh_results <- list()
   hh_results$hh_id <- hh_id
+  
+  print(paste0("Running for household number: ",hh_id))
+  
   
   for (tf in names(time_frames)) {
     tf_start <- time_frames[[tf]][1]
@@ -354,9 +338,24 @@ for (i in 1:nrow(MICS_sf)) {
   }
   
   results_fulani[[i]] <- hh_results
+  
+  # Add the household ID to completed_ids
+  completed_ids <- c(completed_ids, hh_id)
+  
+  # Save progress every N iterations (e.g., every 100 households)
+  if (i %% 100 == 0) {
+    saveRDS(list(results_fulani = results_fulani, completed_ids = completed_ids), progress_file)
+  }
 }
+
+# Shut down parallel workers after the job is done
+plan(sequential)
+
+# Final save after the loop completes
+saveRDS(list(results_fulani = results_fulani, completed_ids = completed_ids), progress_file)
 
 # Convert to data.table
 results_fulani_dt <- rbindlist(lapply(results_fulani, as.data.table), fill = TRUE)
 
-
+write.csv(results_fulani_dt, paste0(wd, data_path, "ACLED_fulani",".csv"), row.names = FALSE, na = "")
+print("ACLED Fulani treatment variables saved to ACLED_fulani.csv file")
