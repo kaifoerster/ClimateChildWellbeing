@@ -54,7 +54,7 @@ source("functions.R")
 #   2) Load MICS and ACLED dataset
 # ===========================================================================
 
-MICS_data <- data.table(read_dta(paste0(wd, input_path, "Nigeria_MICS_5_6_household_level_gps_only_fin.dta")))
+MICS_data <- data.table(read_dta(paste0(wd, input_path, "Nigeria_MICS_5_6_cluster_level_gps_only_fin.dta")))
 MICS_data[, date := substr(interview_date, 1, 10)]
 MICS_data$date <- as.Date(as.character(MICS_data$date), format = "%Y-%m-%d")
 MICS_data <- MICS_data[!is.na(date)] # drops one row which was probably an empty row 
@@ -136,15 +136,15 @@ if (file.exists(progress_file)) {
 for (i in 1:nrow(MICS_sf)) {
   hh_sf <- MICS_sf[i, ]
   int_date <- MICS_data[i, date]
-  hh_id <- MICS_data[i, id_hh][1]  # Store hh_id
+  cluster_id <- MICS_data[i, id_coordinates_num][1]  # Store cluster_id
   
   # Skip already completed households
-  if (hh_id %in% completed_ids) next
+  if (cluster_id %in% completed_ids) next
   
   hh_results <- list()
-  hh_results$hh_id <- hh_id
+  hh_results$cluster_id <- cluster_id
   
-  print(paste0("Running for household number: ",hh_id))
+  print(paste0("Running for household number: ",cluster_id))
   
   # Iterate through each time frame
   for (tf in names(time_frames)) {
@@ -171,7 +171,7 @@ for (i in 1:nrow(MICS_sf)) {
   results[[i]] <- hh_results
   
   # Add the household ID to completed_ids
-  completed_ids <- c(completed_ids, hh_id)
+  completed_ids <- c(completed_ids, cluster_id)
   
   # Save progress every N iterations (e.g., every 100 households)
   if (i %% 100 == 0) {
@@ -188,8 +188,8 @@ saveRDS(list(results = results, completed_ids = completed_ids), progress_file)
 # Convert results to data.table
 results_dt <- rbindlist(lapply(results, as.data.table), fill = TRUE)
 
-write.csv(results_dt, paste0(wd, data_path, "ACLED_all",".csv"), row.names = FALSE, na = "")
-print("ACLED all treatment variables saved to ACLED_all.csv file")
+write.csv(results_dt, paste0(wd, data_path, "ACLED_cluster_all",".csv"), row.names = FALSE, na = "")
+print("ACLED all treatment variables saved to ACLED_cluster_all.csv file")
 
 rm(saved_data)
 # ===========================================================================
@@ -223,15 +223,15 @@ if (file.exists(progress_file)) {
 for (i in 1:nrow(MICS_sf)) {
   hh_sf <- MICS_sf[i, ]
   int_date <- MICS_data[i, date]
-  hh_id <- MICS_data[i, id_hh][1]  # Store hh_id
+  cluster_id <- MICS_data[i, id_coordinates_num][1]  # Store cluster_id
   
   # Skip already completed households
-  if (hh_id %in% completed_ids) next
+  if (cluster_id %in% completed_ids) next
   
   hh_results <- list()
-  hh_results$hh_id <- hh_id
+  hh_results$cluster_id <- cluster_id
   
-  print(paste0("Running for household number: ",hh_id))
+  print(paste0("Running for household number: ",cluster_id))
   
   for (tf in names(time_frames)) {
     tf_start <- time_frames[[tf]][1]
@@ -255,7 +255,7 @@ for (i in 1:nrow(MICS_sf)) {
   results_boko_haram[[i]] <- hh_results
   
   # Add the household ID to completed_ids
-  completed_ids <- c(completed_ids, hh_id)
+  completed_ids <- c(completed_ids, cluster_id)
   
   # Save progress every N iterations (e.g., every 100 households)
   if (i %% 100 == 0) {
@@ -272,8 +272,8 @@ saveRDS(list(results_boko_haram = results_boko_haram, completed_ids = completed_
 # Convert to data.table
 results_boko_haram_dt <- rbindlist(lapply(results_boko_haram, as.data.table), fill = TRUE)
 
-write.csv(results_boko_haram_dt, paste0(wd, data_path, "ACLED_boko_haram",".csv"), row.names = FALSE, na = "")
-print("ACLED Boko Haram treatment variables saved to ACLED_boko_haram.csv file")
+write.csv(results_boko_haram_dt, paste0(wd, data_path, "ACLED_cluster_boko_haram",".csv"), row.names = FALSE, na = "")
+print("ACLED Boko Haram treatment variables saved to ACLED_cluster_boko_haram.csv file")
 
 rm(saved_data)
 # ===========================================================================
@@ -307,15 +307,15 @@ if (file.exists(progress_file)) {
 for (i in 1:nrow(MICS_sf)) {
   hh_sf <- MICS_sf[i, ]
   int_date <- MICS_data[i, date]
-  hh_id <- MICS_data[i, id_hh][1]  # Store hh_id
+  cluster_id <- MICS_data[i, id_coordinates_num][1]  # Store cluster_id
   
   # Skip already completed households
-  if (hh_id %in% completed_ids) next
+  if (cluster_id %in% completed_ids) next
   
   hh_results <- list()
-  hh_results$hh_id <- hh_id
+  hh_results$cluster_id <- cluster_id
   
-  print(paste0("Running for household number: ",hh_id))
+  print(paste0("Running for household number: ",cluster_id))
   
   
   for (tf in names(time_frames)) {
@@ -340,7 +340,7 @@ for (i in 1:nrow(MICS_sf)) {
   results_fulani[[i]] <- hh_results
   
   # Add the household ID to completed_ids
-  completed_ids <- c(completed_ids, hh_id)
+  completed_ids <- c(completed_ids, cluster_id)
   
   # Save progress every N iterations (e.g., every 100 households)
   if (i %% 100 == 0) {
@@ -357,5 +357,5 @@ saveRDS(list(results_fulani = results_fulani, completed_ids = completed_ids), pr
 # Convert to data.table
 results_fulani_dt <- rbindlist(lapply(results_fulani, as.data.table), fill = TRUE)
 
-write.csv(results_fulani_dt, paste0(wd, data_path, "ACLED_fulani",".csv"), row.names = FALSE, na = "")
-print("ACLED Fulani treatment variables saved to ACLED_fulani.csv file")
+write.csv(results_fulani_dt, paste0(wd, data_path, "ACLED_cluster_fulani",".csv"), row.names = FALSE, na = "")
+print("ACLED Fulani treatment variables saved to ACLED_cluster_fulani.csv file")
